@@ -1,5 +1,6 @@
 use Data::Dumper;
 use strict;
+use File::Basename;
 use HTTP::Request::Common;
 use Bio::KBase::userandjobstate::Client;
 use Bio::KBase::Transform::Client;
@@ -12,24 +13,59 @@ use Proc::ParallelLoop;
 use Bio::KBase::AuthToken;
 use IO::Handle;
 
-my($opt, $usage) = describe_options("%c %o data-dir",
-				    ["n-uploads|n=i" => 'Number of genomes to upload', { default => 1 }],
+my($opt, $usage) = describe_options("%c %o data-file [data-file ...]",
+				    ["files-from=s" => "Use given file as the list of data files to load"],
 				    ["log-dir=s" => 'Logging directory'],
 				    ["parallel=i" => "Parallel threads", { default => 1 }],
 				    ["shock_service_url=s" => "Shock URL", { default => 'https://kbase.us/services/shock-api/' }],
 				    ["handle_service_url=s" => "Handle service url", { default => 'https://kbase.us/services/handle_service/' }],
 				    ["ujs_service_url=s" => "UJS url", { default => 'https://kbase.us/services/userandjobstate/'}],
 				    ["transform_service_url=s" => "Transform service url", { default => 'https://kbase.us/services/transform/'}],
-				    ["workspace=s" => "Workspace name", { default => 'olson:1451943504644'}],
+				    ["workspace=s" => "Workspace name"],
 				    ["help|h" => 'Show this help message'],
 				    );
 
 print($usage->text), exit 0 if $opt->help;
-die($usage->text) if @ARGV != 1;
 
-my $data_dir = shift;
+$opt->workspace or die "Workspace name must be provided with --workspace\n";
 
--d $data_dir or die "Data directory $data_dir does not exist\n";
+my $err;
+my @data_files;
+for my $f (@ARGV)
+{
+    if (-f $f)
+    {
+	push(@data_files, $f);
+    }
+    else
+    {
+	warn "Input file $f does not exist\n";
+	$err++;
+    }
+}
+
+if ($opt->files_from)
+{
+    open(F, "<", $opt->files_from) or die "Cannot open " . $opt->files_from . ": $!";
+    while (<F>)
+    {
+	chomp;
+	if (-f $_)
+	{
+	    push(@data_files, $_);
+	}
+	else
+	{
+	    warn "Input file $_ does not exist\n";
+	    $err++;
+	}
+    }
+    close(F);
+}
+if ($err)
+{
+    die "$err errors found in input files\n";
+}
 
 # --shock_service_url https://ci.kbase.us/services/shock-api/ --handle_service_url https://ci.kbase.us/services/handle_service/ --ujs_service_url https://ci.kbase.us/services/userandjobstate/
 
@@ -52,22 +88,27 @@ my @auth_header = ("Authorization"  => "OAuth $token");
 
 my @work;
 
-opendir(D, $data_dir) or die "Cannot opendir $data_dir: $!";
-
-for (my $i = 0; $i < $opt->n_uploads; $i++)
+my $i = 0;
+for my $file (@data_files)
 {
-    my $file;
-    while (1)
+    if (open(F, "<", $file))
     {
-	$file = readdir(D);
-	last unless $file;
-	next unless $file =~ /\.(gb|gbff)$/;
-	next if ! -f "$data_dir/$file";
-	last;
+	my $fl = <F>;
+	close(F);
+	if ($fl !~ /LOCUS/)
+	{
+	    warn "Skipping $file: no LOCUS line at start\n";
+	    next;
+	}
+    }
+    else
+    {
+	warn "Skipping $file: cannot open: $!\n";
+	next;
     }
 
-    last unless $file;
-    push(@work, ["$data_dir/$file", $file, $i]);
+    my $ws_name = basename($file);
+    push(@work, [$file, $ws_name, $i++]);
 }
 
 pareach \@work, sub {
@@ -80,8 +121,6 @@ pareach \@work, sub {
 sub upload_file
 {
     my($path, $ws_name, $idx) = @_;
-
-    $ws_name =~ s/\./_/g;
 
     my $log_fh;
     if ($opt->log_dir)
@@ -171,7 +210,7 @@ sub upload_file
     while (!defined($drop_dead) || (time < $drop_dead))
     {
 	my @res = $ujs->get_job_status($job_id);
-	print Dumper(\@res);
+#	print Dumper(\@res);
 	
 	my($last_update, $stage, $status, $progress, $est_complete, $complete, $error) = @res;
 
@@ -186,6 +225,9 @@ sub upload_file
 	{
 	    my $t = gettimeofday;
 	    printf $log_fh "$path\t$ws_name\tstatus=$last_status\t%f\n", $t - $last_t if $log_fh;
+	    $path =~ s/\r/_r/g;
+	    $ws_name =~ s/\r/_r/g;
+	    $last_status =~ s/\r/_r/g;
 	    printf "$path\t$ws_name\tstatus=$last_status\t%f\n", $t - $last_t;
 	    $last_t = $t;
 	    $last_status = $status;
