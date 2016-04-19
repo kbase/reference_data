@@ -12,7 +12,7 @@ my $json = JSON->new->allow_nonref;
 my($opt, $usage) = describe_options("%c %o ",
 			["genome=s" => 'WS genome object file'],
 			["contigset=s" => 'WS contig set file'],
-			["workspace=s" => "Workspace name", { default => 'test_ref'}],
+			["workspace=s" => "Workspace name", { default => 'RefSeq'}],
 			["solr_url=s" => "Solr URL", { default => 'http://localhost:8005/solr'}],
 			["index=s" => "Index genome in solr, yes|no", { default => 'yes'}],
 			["help|h" => 'Show this help message'],
@@ -32,23 +32,21 @@ $genome_name =~s/(.gbff|.gbf|.gb)$//;
 my $contigset_name = $ws_contigset_name;
 $contigset_name =~s/(.gbff|.gbf|.gb)//;
 
-print "$genome_name\t$contigset_name\n";
+#print "$genome_name\t$contigset_name\n";
 
 #print parameters
 #print "$ws_name:$genome_name:$contigset_name\n";
 
 # Retrieve genome and contigset objects from the workspace
 
-print STDERR "renaming objects\n"; 
-`ws-rename --workspace $ws_name $ws_genome_name $genome_name`;
-`ws-rename --workspace $ws_name $ws_contigset_name $contigset_name`;
-print STDERR "renaming objects - done\n"; 
+`ws-rename --workspace $ws_name $ws_genome_name $genome_name` unless $ws_genome_name eq $genome_name;
+`ws-rename --workspace $ws_name $ws_contigset_name $contigset_name` unless $ws_contigset_name eq $contigset_name;
 
 my $ws_genome_metadata  = `ws-get -w $ws_name $genome_name -m`;
 my $ws_genome  = $json->decode(`ws-get -w $ws_name $genome_name`);
 my $ws_contigset = $json->decode(`ws-get -w $ws_name $contigset_name`);
 
-print Dumper ($ws_genome_metadata, $ws_genome);
+#print Dumper ($ws_genome_metadata, $ws_genome);
 
 my @genome_metadata = split(/\n/, $ws_genome_metadata);
 foreach my $metadata (@genome_metadata){
@@ -159,14 +157,14 @@ foreach my $feature (@{$ws_genome->{features}}){
 }
 
 
-print Dumper (\@solr_records);
+#print Dumper (\@solr_records);
 
 my $genome_json = $json->pretty->encode(\@solr_records);
-my $genome_file = "genome.json";
+my $genome_file = "$genome_name.json";
 
 open FH, ">$genome_file" or die "Cannot write to genome.json: $!";
 print FH "$genome_json";
 close FH;
 
-#`post.update.sh genomes $genome_file` if $opt->index=~/y|yes|true|1/i;
+`$Bin/post_solr_update.sh genomes $genome_file` if $opt->index=~/y|yes|true|1/i;
 
