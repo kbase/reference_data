@@ -1,5 +1,6 @@
 use Data::Dumper;
 use strict;
+use File::Basename;
 use HTTP::Request::Common;
 use Bio::KBase::userandjobstate::Client;
 use Bio::KBase::Transform::Client;
@@ -12,24 +13,33 @@ use Proc::ParallelLoop;
 use Bio::KBase::AuthToken;
 use IO::Handle;
 
-my($opt, $usage) = describe_options("%c %o data-dir",
-				    ["n-uploads|n=i" => 'Number of genomes to upload', { default => 1 }],
+$| = 1;
+
+my($opt, $usage) = describe_options("%c %o data-file [data-file ...]",
+				    ["timeout=s" => 'Job timeout', { default => 120 } ],
 				    ["log-dir=s" => 'Logging directory'],
+				    ["use-new-genome-type|n" => "Use new genome annotation type for uploaded data"],
+				    ["ci" => "Use the CI infrastructure"],
+				    ["base-url=s" => "Use the given base url" ],
 				    ["parallel=i" => "Parallel threads", { default => 1 }],
-				    ["shock_service_url=s" => "Shock URL", { default => 'https://kbase.us/services/shock-api/' }],
-				    ["handle_service_url=s" => "Handle service url", { default => 'https://kbase.us/services/handle_service/' }],
-				    ["ujs_service_url=s" => "UJS url", { default => 'https://kbase.us/services/userandjobstate/'}],
-				    ["transform_service_url=s" => "Transform service url", { default => 'https://kbase.us/services/transform/'}],
-				    ["workspace=s" => "Workspace name", { default => 'olson:1451943504644'}],
+				    ["shock_service_url=s" => "Shock URL"],
+				    ["handle_service_url=s" => "Handle service url"],
+				    ["ujs_service_url=s" => "UJS url"],
+				    ["transform_service_url=s" => "Transform service url"],
+				    ["workspace=s" => "Workspace name"],
 				    ["help|h" => 'Show this help message'],
 				    );
 
 print($usage->text), exit 0 if $opt->help;
-die($usage->text) if @ARGV != 1;
+die($usage->text) if @ARGV < 1;
 
-my $data_dir = shift;
+my $target_type = 'KBaseGenomes.Genome';
+if ($opt->use_new_genome_type)
+{
+    $target_type = "KBaseGenomeAnnotations.GenomeAnnotation";
+}
 
--d $data_dir or die "Data directory $data_dir does not exist\n";
+my @data_files = @ARGV;
 
 # --shock_service_url https://ci.kbase.us/services/shock-api/ --handle_service_url https://ci.kbase.us/services/handle_service/ --ujs_service_url https://ci.kbase.us/services/userandjobstate/
 
@@ -43,31 +53,51 @@ $ENV{KB_AUTH_TOKEN} = $token;
 my $ua = LWP::UserAgent->new;
 my $json = JSON::XS->new->pretty(1);
 
-my $shock_url = $opt->shock_service_url;
 my $ws = $opt->workspace;
-my $ujs = Bio::KBase::userandjobstate::Client->new($opt->ujs_service_url);
-my $transform  = Bio::KBase::Transform::Client->new($opt->transform_service_url);
+
+my $base_url = "https://kbase.us/services";
+if ($opt->ci)
+{
+    $base_url = "https://ci.kbase.us/services";
+}
+if ($opt->base_url)
+{
+    $base_url = $opt->base_url;
+}
+
+my $shock_url = $opt->shock_service_url // "$base_url/shock-api/";
+my $ujs_url = $opt->ujs_service_url // "$base_url/userandjobstate/";
+my $transform_url = $opt->transform_service_url // "$base_url/transform/";
+
+
+my $ujs = Bio::KBase::userandjobstate::Client->new($ujs_url);
+my $transform  = Bio::KBase::Transform::Client->new($transform_url);
 
 my @auth_header = ("Authorization"  => "OAuth $token");
 
 my @work;
 
-opendir(D, $data_dir) or die "Cannot opendir $data_dir: $!";
-
-for (my $i = 0; $i < $opt->n_uploads; $i++)
+my $i = 0;
+for my $file (@data_files)
 {
-    my $file;
-    while (1)
+    if (open(F, "<", $file))
     {
-	$file = readdir(D);
-	last unless $file;
-	next unless $file =~ /\.(gb|gbff)$/;
-	next if ! -f "$data_dir/$file";
-	last;
+	my $fl = <F>;
+	close(F);
+	if ($fl !~ /LOCUS/)
+	{
+	    warn "Skipping $file: no LOCUS line at start\n";
+	    next;
+	}
+    }
+    else
+    {
+	warn "Skipping $file: cannot open: $!\n";
+	next;
     }
 
-    last unless $file;
-    push(@work, ["$data_dir/$file", $file, $i]);
+    my $ws_name = basename($file);
+    push(@work, [$file, $ws_name, $i++]);
 }
 
 pareach \@work, sub {
@@ -80,8 +110,6 @@ pareach \@work, sub {
 sub upload_file
 {
     my($path, $ws_name, $idx) = @_;
-
-    $ws_name =~ s/\./_/g;
 
     my $log_fh;
     if ($opt->log_dir)
@@ -140,7 +168,7 @@ sub upload_file
     
     my $params = {
 	external_type => 'Genbank.Genome',
-	kbase_type => 'KBaseGenomes.Genome',
+	kbase_type => $target_type,
 	workspace_name => $ws,
 	object_name => $ws_name,
 	optional_arguments => {
@@ -171,13 +199,13 @@ sub upload_file
     while (!defined($drop_dead) || (time < $drop_dead))
     {
 	my @res = $ujs->get_job_status($job_id);
-	print Dumper(\@res);
+#	print Dumper(\@res);
 	
 	my($last_update, $stage, $status, $progress, $est_complete, $complete, $error) = @res;
 
 	if ($status =~ /Initializ/ && !defined($drop_dead))
 	{
-	    $drop_dead = time + 120;
+	    $drop_dead = time + $opt->timeout;
 	    print "Set dropdead with status=$status\n";
 	    print $log_fh "Set dropdead with status=$status\n" if $log_fh;
 	}
@@ -186,6 +214,9 @@ sub upload_file
 	{
 	    my $t = gettimeofday;
 	    printf $log_fh "$path\t$ws_name\tstatus=$last_status\t%f\n", $t - $last_t if $log_fh;
+	    $path =~ s/\r/_r/g;
+	    $ws_name =~ s/\r/_r/g;
+	    $last_status =~ s/\r/_r/g;
 	    printf "$path\t$ws_name\tstatus=$last_status\t%f\n", $t - $last_t;
 	    $last_t = $t;
 	    $last_status = $status;
@@ -199,6 +230,14 @@ sub upload_file
 	    last;
 	}
 	sleep 1;
+    }
+
+    my $det_err = $ujs->get_detailed_error($job_id);
+    $det_err =~ s/\r//g;
+    if ($det_err)
+    {
+	print $log_fh Dumper($det_err) if $log_fh;
+	print Dumper($det_err);
     }
 
     if (!$ok)

@@ -30,7 +30,7 @@ SERVER_TESTS = $(wildcard server-tests/*.t)
 
 default: bin
 
-bin: $(BIN_PERL)
+bin: $(BIN_PERL) $(BIN_PYTHON)
 
 test: test-client test-scripts test-service
 	@echo "running client and script tests"
