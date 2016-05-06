@@ -16,7 +16,7 @@ use IO::Handle;
 $| = 1;
 
 my($opt, $usage) = describe_options("%c %o data-file [data-file ...]",
-				    ["timeout=s" => 'Job timeout', { default => 120 } ],
+				    ["files-from=s" => "Use given file as the list of data files to load"],
 				    ["log-dir=s" => 'Logging directory'],
 				    ["use-new-genome-type|n" => "Use new genome annotation type for uploaded data"],
 				    ["ci" => "Use the CI infrastructure"],
@@ -39,7 +39,45 @@ if ($opt->use_new_genome_type)
     $target_type = "KBaseGenomeAnnotations.GenomeAnnotation";
 }
 
-my @data_files = @ARGV;
+$opt->workspace or die "Workspace name must be provided with --workspace\n";
+
+my $err;
+my @data_files;
+for my $f (@ARGV)
+{
+    if (-f $f)
+    {
+	push(@data_files, $f);
+    }
+    else
+    {
+	warn "Input file $f does not exist\n";
+	$err++;
+    }
+}
+
+if ($opt->files_from)
+{
+    open(F, "<", $opt->files_from) or die "Cannot open " . $opt->files_from . ": $!";
+    while (<F>)
+    {
+	chomp;
+	if (-f $_)
+	{
+	    push(@data_files, $_);
+	}
+	else
+	{
+	    warn "Input file $_ does not exist\n";
+	    $err++;
+	}
+    }
+    close(F);
+}
+if ($err)
+{
+    die "$err errors found in input files\n";
+}
 
 # --shock_service_url https://ci.kbase.us/services/shock-api/ --handle_service_url https://ci.kbase.us/services/handle_service/ --ujs_service_url https://ci.kbase.us/services/userandjobstate/
 
