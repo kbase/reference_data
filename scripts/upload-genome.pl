@@ -135,6 +135,7 @@ for my $file (@data_files)
     }
 
     my $ws_name = basename($file);
+    $ws_name =~s/(\.gb|\.gbf|\.gbff\|.gbk|\.genbank)$//i; ##
     push(@work, [$file, $ws_name, $i++]);
 }
 
