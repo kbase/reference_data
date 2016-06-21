@@ -224,7 +224,7 @@ sub index_ws_gto_to_solr {
 
 	print "Indexing genome $genome_id in Solr\n";
 
-	my $cmd = "time $Bin/ws_genome_to_solr.pl --index yes --workspace $workspace --genome $genome_id";
+	my $cmd = "time $Bin/ws_gto_to_solr.pl --index yes --workspace $workspace --genome $genome_id";
 
 	print "$cmd\n";
 
