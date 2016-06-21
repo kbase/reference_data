@@ -12,14 +12,14 @@ my $json = JSON->new->allow_nonref;
 my($opt, $usage) = describe_options("%c %o ",
 			["genome=s" => 'WS genome object file'],
 			["contigset=s" => 'WS contig set file'],
-			["workspace=s" => "Workspace name", { default => 'RefSeq'}],
+			["workspace=s" => "Workspace name", { default => 'RefSeq2'}],
 			["solr_url=s" => "Solr URL", { default => 'http://localhost:8005/solr'}],
 			["index=s" => "Index genome in solr, yes|no", { default => 'yes'}],
 			["help|h" => 'Show this help message'],
 		);
 
 print($usage->text), exit 0 if $opt->help;
-die($usage->text) unless $opt->genome && $opt->contigset;
+die($usage->text) unless $opt->genome;
 
 # Copy parameter values
 my $ws_name = $opt->workspace;
@@ -44,7 +44,7 @@ $contigset_name =~s/(.gbff|.gbf|.gb)//;
 
 my $ws_genome_metadata  = `ws-get -w $ws_name $genome_name -m`;
 my $ws_genome  = $json->decode(`ws-get -w $ws_name $genome_name`);
-my $ws_contigset = $json->decode(`ws-get -w $ws_name $contigset_name`);
+#my $ws_contigset = $json->decode(`ws-get -w $ws_name $contigset_name`);
 
 #print Dumper ($ws_genome_metadata, $ws_genome);
 
